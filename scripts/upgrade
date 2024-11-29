@@ -1,0 +1,85 @@
+#!/bin/bash
+
+#=================================================
+# GENERIC START
+#=================================================
+# IMPORT GENERIC HELPERS
+#=================================================
+
+source _common.sh
+source /usr/share/yunohost/helpers
+
+#=================================================
+# STANDARD UPGRADE STEPS
+#=================================================
+# STOP SYSTEMD SERVICE
+#=================================================
+ynh_script_progression --message="Stopping a systemd service..." --weight=1
+
+ynh_systemd_action --service_name="$app" --action="stop" --log_path="systemd"
+
+#=================================================
+# ENSURE DOWNWARD COMPATIBILITY
+#=================================================
+ynh_script_progression --message="Ensuring downward compatibility..." --weight=1
+
+if [ ! -L "$data_dir/logs" ]; then
+    ynh_secure_remove --file="$data_dir/logs"
+    ln -s "/var/log/$app" "$data_dir/logs"
+fi
+
+#=================================================
+# "REBUILD" THE APP (DEPLOY NEW SOURCES, RERUN NPM BUILD...)
+#=================================================
+# DOWNLOAD, CHECK AND UNPACK SOURCE
+#=================================================
+ynh_script_progression --message="Upgrading source files..." --weight=1
+
+# Download, check integrity, uncompress and patch the source from manifest.toml
+ynh_setup_source --dest_dir="$install_dir" --full_replace=1
+
+chown -R "$app:$app" "$install_dir"
+
+#=================================================
+# REAPPLY SYSTEM CONFIGURATIONS
+#=================================================
+ynh_script_progression --message="Upgrading system configurations related to $app..." --weight=1
+
+# Create a dedicated NGINX config
+ynh_add_nginx_config
+
+# Create a dedicated systemd config
+ynh_add_systemd_config
+yunohost service add "$app" --description="FlareSolverr daemon" --log="/var/log/$app/flaresolverr.txt"
+
+# Use logrotate to manage app-specific logfile(s)
+ynh_use_logrotate --non-append --logfile="/var/log/$app/"
+
+#=================================================
+# ADD A CONFIGURATION
+#=================================================
+ynh_script_progression --message="Configuring FlareSolverr..." --weight=2
+
+# Add newline at end of file if required
+if [ -e "$data_dir/config.xml" ]; then
+    sed -i -e '$a\' "$data_dir/config.xml"
+fi
+
+ynh_add_config --template="config.xml" --destination="$data_dir/config.xml"
+
+chmod 750 "$data_dir"
+chmod -R o-rwx "$data_dir"
+chown -R "$app:$app" "$data_dir"
+
+#=================================================
+# START SYSTEMD SERVICE
+#=================================================
+ynh_script_progression --message="Starting a systemd service..." --weight=2
+
+ynh_systemd_action --service_name="$app" --action="start" --log_path="systemd" --line_match="Application started." --timeout=30
+
+#=================================================
+# END OF SCRIPT
+#=================================================
+
+ynh_script_progression --message="Upgrade of $app completed" --last
